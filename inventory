@@ -1,0 +1,28 @@
+[kvm]
+192.168.20.105 host_name='kvm01.local.lab' ip_addr='192.168.20.105'
+192.168.20.106 host_name='kvm02.local.lab' ip_addr='192.168.20.106'
+
+
+[kvm:vars]
+
+dns_name=8.8.8.8
+ntp_server='0.centos.pool.ntp.org'
+
+# Define your Ethernet below 
+eth0='ens161'
+eth1='ens192'
+eth2='ens224'
+eth3='ens256'
+
+# Define your Bond Details
+BOND1_NAME=bond0
+BOND2_NAME=bond1
+
+# Define Your Bridge Details
+BRIDGE2_NAME=cloudbr1
+BRIDGE1_NAME=cloudbr0
+
+# MGMT Network Details
+
+MGMT_NETMASK=255.255.255.0
+MGMT_GATEWAY=192.168.20.1
