@@ -1,0 +1,239 @@
+---
+  - hosts: kvm
+    tasks:
+      - name: "Lets disable the firewalld"
+        service:
+            name: firewalld
+            state: stopped
+            enabled: no
+      - name: "Disable the Selinux"
+        lineinfile:
+          path: /etc/sysconfig/selinux
+          regexp: '^SELINUX='
+          line: SELINUX=disabled
+      - name: "Configure the hostname ( FQDN )"
+        hostname:
+          name: "{{ host_name }}"
+      - name: "Put entry in hosts file"
+        lineinfile:
+          path: /etc/hosts
+          line: "{{ ip_addr }} {{ host_name }}"
+      - name: "Lets put the DNS entry in resolv.conf"
+        lineinfile:
+          path: /etc/resolv.conf
+          regexp: '^nameserver'
+          line: "nameserver {{ dns_name }}"
+      - name: "lets Install NTP package"
+        block:
+          - yum:
+              name: ntp
+              state: present
+          - command: ntpdate -u "{{ ntp_server }}"
+          - service:
+             name: ntpd
+             state: restarted
+             enabled: yes
+      - name: "Let's install the Virtualization Package and Grphical Administor package"
+        yum:
+          name: "{{ item }}"
+          state: present
+        with_items:
+          - "@Virtualization Hypervisor"
+          - "@Virtualization Client"
+          - "@Virtualization"
+          - "@^GNOME Desktop"
+          - qemu-kvm-tools
+        ignore_errors: yes
+      - name: "Lets create repo for cloudstack"
+        yum_repository:
+          name: CloudStack
+          description: Cloudstack
+          file: Cloudstack
+          baseurl: http://packages.shapeblue.com/cloudstack/upstream/centos7/4.13/
+          enabled: yes
+          gpgcheck: yes
+          gpgkey: http://packages.shapeblue.com/release.asc
+      - name: "Let's install CloudStack Agent on all nodes"
+        yum:
+          name: cloudstack-agent
+          state: present
+      - name: "Now lets add libvirt parameters in config file"
+        block:
+          - lineinfile:
+              path: /etc/libvirt/libvirtd.conf
+              backup: yes
+              state: present
+              line: "{{ item }}"
+            with_items:
+            - 'listen_tls = 0'
+            - 'listen_tcp = 1'
+            - 'tcp_port = "16509"'
+            - 'auth_tcp = "none"'
+            - 'mdns_adv = 0'
+          - lineinfile:
+              path: /etc/sysconfig/libvirtd
+              backup: yes
+              state: present
+              line: "{{ item }}"
+            with_items:
+              - 'LIBVIRTD_ARGS="--listen"'
+          - service:
+              name: libvirtd
+              state: restarted
+              enabled: yes
+## Configure host the networking part
+      - name: "Lets create networking"
+        block:
+          - name: "Lets clear the files"
+            lineinfile:
+              path: "{{ item }}"
+              backup: yes
+              line: "^#BACKUP FILE"
+              state: present
+            with_items:
+              - "/etc/sysconfig/network-scripts/ifcfg-{{ eth0 }}"
+              - "/etc/sysconfig/network-scripts/ifcfg-{{ eth1 }}"
+              - "/etc/sysconfig/network-scripts/ifcfg-{{ eth2 }}"
+              - "/etc/sysconfig/network-scripts/ifcfg-{{ eth3 }}"
+            ignore_errors: yes            
+          - name: "Lets create the bond and bridge file for Management"
+            block:  
+              - file: 
+                  path: "/etc/sysconfig/network-scripts/ifcfg-{{ BOND1_NAME }}"
+                  state: touch
+              - file: 
+                  path: "/etc/sysconfig/network-scripts/ifcfg-{{ BOND2_NAME }}"
+                  state: touch
+              - file: 
+                  path: "/etc/sysconfig/network-scripts/ifcfg-{{ BRIDGE1_NAME }}"
+                  state: touch
+              - file: 
+                  path: "/etc/sysconfig/network-scripts/ifcfg-{{ BRIDGE2_NAME }}"
+                  state: touch
+## Let's configure primary Bridge and Bond 
+              - lineinfile:
+                  path: "/etc/sysconfig/network-scripts/ifcfg-{{ BRIDGE1_NAME }}"
+                  line: "{{ item }}"
+                  state: present
+                with_items:
+                  - "DEVICE={{ BRIDGE1_NAME }}"
+                  - TYPE=Bridge
+                  - ONBOOT=yes
+                  - DELAY=0
+                  - "IPADDR={{ ip_addr }}"
+                  - "GATEWAY={{ MGMT_GATEWAY }}"
+                  - "NETMASK={{ MGMT_NETMASK }}"
+                  - STP=yes
+                  - NM_CONTROLLED=no
+              - lineinfile:
+                  path: "/etc/sysconfig/network-scripts/ifcfg-{{ BOND1_NAME }}"
+                  line: "{{ item }}"
+                  state: present
+                with_items:
+                  - "DEVICE={{ BOND1_NAME }}"
+                  - ONBOOT=yes
+                  - "BRIDGE={{ BRIDGE1_NAME }}"
+                  - BONDING_OPTS="mode=5 miimon=100"
+                  - NM_CONTROLLED=no
+          - name: "Now Lets delete our interface file"
+            file:
+              path: "{{ item }}"
+              state: absent
+            with_items:
+              - "/etc/sysconfig/network-scripts/ifcfg-{{ eth0 }}"
+              - "/etc/sysconfig/network-scripts/ifcfg-{{ eth1 }}"
+              - "/etc/sysconfig/network-scripts/ifcfg-{{ eth2 }}"
+              - "/etc/sysconfig/network-scripts/ifcfg-{{ eth3 }}"
+            ignore_errors: yes
+          - name: "Now Lets create the file again and insert new values"
+            block:
+              - file:
+                  path: "{{ item }}"
+                  state: touch
+                with_items:
+                  - "/etc/sysconfig/network-scripts/ifcfg-{{ eth0 }}"
+                  - "/etc/sysconfig/network-scripts/ifcfg-{{ eth1 }}"
+                  - "/etc/sysconfig/network-scripts/ifcfg-{{ eth2 }}"
+                  - "/etc/sysconfig/network-scripts/ifcfg-{{ eth3 }}"
+## Define you NIC's for bonding i.e eth0 + eth1
+              - lineinfile:
+                  path: "/etc/sysconfig/network-scripts/ifcfg-{{ eth0 }}"
+                  line: "{{ item }}"
+                  state: present
+                with_items:
+                  - TYPE=Ethernet
+                  - DEVICE={{ eth0 }}
+                  - ONBOOT=yes
+                  - MASTER={{ BOND1_NAME }}
+                  - SLAVE=yes
+                  - USERCTL=no
+                  - BOOTPROTO=none
+                  - NM_CONTROLLED=no
+              - lineinfile:
+                  path: "/etc/sysconfig/network-scripts/ifcfg-{{ eth1 }}"
+                  line: "{{ item }}"
+                  state: present
+                with_items:
+                  - TYPE=Ethernet
+                  - DEVICE={{ eth1 }}
+                  - ONBOOT=yes
+                  - MASTER={{ BOND1_NAME }}
+                  - SLAVE=yes
+                  - USERCTL=no
+                  - BOOTPROTO=none
+                  - NM_CONTROLLED=no
+## Let's Configure the Second Bridge and Bond
+              - lineinfile:
+                  path: "/etc/sysconfig/network-scripts/ifcfg-{{ BRIDGE2_NAME }}"
+                  line: "{{ item }}"
+                  state: present
+                with_items:
+                  - "DEVICE={{ BRIDGE2_NAME }}"
+                  - TYPE=Bridge
+                  - ONBOOT=yes
+                  - DELAY=0
+                  - STP=yes
+                  - NM_CONTROLLED=no
+              - lineinfile:
+                  path: "/etc/sysconfig/network-scripts/ifcfg-{{ BOND2_NAME }}"
+                  line: "{{ item }}"
+                  state: present
+                with_items:
+                  - "DEVICE={{ BOND2_NAME }}"
+                  - ONBOOT=yes
+                  - "BRIDGE={{ BRIDGE2_NAME }}"
+                  - BONDING_OPTS="mode=5 miimon=100"
+                  - NM_CONTROLLED=no
+## Define you NIC's for bonding i.e eth2 + eth3
+              - lineinfile:
+                  path: "/etc/sysconfig/network-scripts/ifcfg-{{ eth2 }}"
+                  line: "{{ item }}"
+                  state: present
+                with_items:
+                  - TYPE=Ethernet
+                  - DEVICE={{ eth2 }}
+                  - ONBOOT=yes
+                  - MASTER={{ BOND2_NAME }}
+                  - SLAVE=yes
+                  - USERCTL=no
+                  - BOOTPROTO=none
+                  - NM_CONTROLLED=no
+              - lineinfile:
+                  path: "/etc/sysconfig/network-scripts/ifcfg-{{ eth3 }}"
+                  line: "{{ item }}"
+                  state: present
+                with_items:
+                  - TYPE=Ethernet
+                  - DEVICE={{ eth3 }}
+                  - ONBOOT=yes
+                  - MASTER={{ BOND2_NAME }}
+                  - SLAVE=yes
+                  - USERCTL=no
+                  - BOOTPROTO=none
+                  - NM_CONTROLLED=no
+          - name: "Now lets restart the network services"
+            service:
+              name: network
+              state: restarted
+
+ 
